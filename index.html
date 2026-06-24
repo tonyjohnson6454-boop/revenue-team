@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Revenue Team</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0E0E10;
+    color: #F2EFE9;
+    font-family: -apple-system, sans-serif;
+    padding: 20px;
+    padding-bottom: 60px;
+  }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: #AAAAAA;
+    margin-bottom: 18px;
+    line-height: 1.4;
+  }
+  textarea {
+    width: 100%;
+    min-height: 80px;
+    background: #1A1A1A;
+    color: #F2EFE9;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 15px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  textarea:focus {
+    outline: none;
+    border-color: #D98E2B;
+  }
+  button {
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px;
+    background: #D98E2B;
+    color: #0E0E10;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: bold;
+  }
+  button:disabled {
+    background: #555;
+    color: #999;
+  }
+  .error-box {
+    margin-top: 12px;
+    background: #2A1612;
+    border: 1px solid #C0573F;
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 12px;
+    color: #E08A6E;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .stage-card {
+    margin-top: 14px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    background: #161617;
+  }
+  .stage-label {
+    font-size: 12px;
+    font-weight: bold;
+    color: #D98E2B;
+    margin-bottom: 6px;
+    letter-spacing: 0.05em;
+  }
+  .stage-body pre {
+    font-size: 13px;
+    white-space: pre-wrap;
+    color: #EDEAE4;
+    font-family: inherit;
+  }
+  .field-row {
+    margin-bottom: 8px;
+  }
+  .field-key {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #8A8782;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+  }
+  .field-val {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+
+<h1>Revenue Team</h1>
+<p class="subtitle">Enter a business idea. Four agents run in sequence: Offer, Lead Magnet, Content, Follow-Up — building a full revenue path.</p>
+
+<textarea id="ideaInput" placeholder="e.g. FeeExposed - an app that scans bills for hidden fees"></textarea>
+<button id="runBtn">Run the team</button>
+<div id="errorBox" style="display:none;" class="error-box"></div>
+<div id="log"></div>
+
+<script>
+const STAGES = {
+  offer: {
+    label: "OFFER",
+    system: 'You are a direct-response offer strategist. No fluff, no hedging. Respond ONLY with raw JSON, no markdown fences, no preamble. Shape: {"offer_name": "string", "price": "string", "promise": "one sentence", "who_its_for": "one sentence", "format": "string"}',
+    buildPrompt: (idea) => `Business idea: "${idea}". Define the single best paid offer. Be decisive, one offer only.`
+  },
+  leadmagnet: {
+    label: "LEAD MAGNET",
+    system: 'You are a lead magnet designer. No fluff. Respond ONLY with raw JSON, no markdown fences. Shape: {"title": "string", "format": "string", "what_it_delivers": "one sentence", "cta_line": "string"}',
+    buildPrompt: (idea, offer) => `Business idea: "${idea}". Paid offer already decided: ${JSON.stringify(offer)}. Design a free lead magnet that connects directly to this exact offer, not generic.`
+  },
+  content: {
+    label: "CONTENT",
+    system: 'You are a short-form content strategist (TikTok, Reels, Threads). No fluff. Respond ONLY with raw JSON, no markdown fences. Shape: {"core_angle": "one sentence", "hook_1": "string", "hook_2": "string", "hook_3": "string"}',
+    buildPrompt: (idea, offer, leadmagnet) => `Business idea: "${idea}". Lead magnet: ${JSON.stringify(leadmagnet)}. Give 3 concrete content hooks (actual opening lines) that drive strangers to this lead magnet.`
+  },
+  followup: {
+    label: "FOLLOW-UP",
+    system: 'You are a follow-up sequence specialist. No fluff. Respond ONLY with raw JSON, no markdown fences. Shape: {"message_1": "string", "message_2": "string", "message_3": "string", "close_line": "string"}',
+    buildPrompt: (idea, offer) => `Business idea: "${idea}". Offer: ${JSON.stringify(offer)}. Write a 3-message follow-up sequence (actual message lines) that turns a free lead into a paying customer, plus a final close line.`
+  }
+};
+
+async function callAgent(system, user) {
+  const res = await fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ system, user })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error("Server error (" + res.status + "): " + errText.slice(0, 200));
+  }
+  const data = await res.json();
+  return data.text || "";
+}
+
+function parseJSON(text) {
+  let cleaned = text.split("```json").join("").split("```").join("").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderStage(label, data) {
+  const card = document.createElement("div");
+  card.className = "stage-card";
+  const labelEl = document.createElement("div");
+  labelEl.className = "stage-label";
+  labelEl.textContent = label;
+  card.appendChild(labelEl);
+
+  const body = document.createElement("div");
+  body.className = "stage-body";
+
+  if (typeof data === "string") {
+    const pre = document.createElement("pre");
+    pre.textContent = data;
+    body.appendChild(pre);
+  } else {
+    for (const key in data) {
+      const row = document.createElement("div");
+      row.className = "field-row";
+      const k = document.createElement("div");
+      k.className = "field-key";
+      k.textContent = key.replace(/_/g, " ");
+      const v = document.createElement("div");
+      v.className = "field-val";
+      v.textContent = data[key];
+      row.appendChild(k);
+      row.appendChild(v);
+      body.appendChild(row);
+    }
+  }
+  card.appendChild(body);
+  return card;
+}
+
+const ideaInput = document.getElementById("ideaInput");
+const runBtn = document.getElementById("runBtn");
+const errorBox = document.getElementById("errorBox");
+const logEl = document.getElementById("log");
+
+runBtn.addEventListener("click", async () => {
+  const idea = ideaInput.value.trim();
+  if (!idea) return;
+
+  runBtn.disabled = true;
+  runBtn.textContent = "Working...";
+  errorBox.style.display = "none";
+  logEl.innerHTML = "";
+
+  try {
+    const workingCard = renderStage("OFFER", "Working...");
+    logEl.appendChild(workingCard);
+    const offerText = await callAgent(STAGES.offer.system, STAGES.offer.buildPrompt(idea));
+    const offer = parseJSON(offerText);
+    if (!offer) {
+      errorBox.textContent = "OFFER stage did not return valid JSON. Raw reply: " + offerText.slice(0, 300);
+      errorBox.style.display = "block";
+      runBtn.disabled = false;
+      runBtn.textContent = "Run the team";
+      return;
+    }
+    logEl.removeChild(workingCard);
+    logEl.appendChild(renderStage(STAGES.offer.label, offer));
+
+    const workingCard2 = renderStage("LEAD MAGNET", "Working...");
+    logEl.appendChild(workingCard2);
+    const lmText = await callAgent(STAGES.leadmagnet.system, STAGES.leadmagnet.buildPrompt(idea, offer));
+    const leadmagnet = parseJSON(lmText);
+    if (!leadmagnet) {
+      errorBox.textContent = "LEAD MAGNET stage did not return valid JSON. Raw reply: " + lmText.slice(0, 300);
+      errorBox.style.display = "block";
+      runBtn.disabled = false;
+      runBtn.textContent = "Run the team";
+      return;
+    }
+    logEl.removeChild(workingCard2);
+    logEl.appendChild(renderStage(STAGES.leadmagnet.label, leadmagnet));
+
+    const workingCard3 = renderStage("CONTENT", "Working...");
+    logEl.appendChild(workingCard3);
+    const contentText = await callAgent(STAGES.content.system, STAGES.content.buildPrompt(idea, offer, leadmagnet));
+    const content = parseJSON(contentText);
+    if (!content) {
+      errorBox.textContent = "CONTENT stage did not return valid JSON. Raw reply: " + contentText.slice(0, 300);
+      errorBox.style.display = "block";
+      runBtn.disabled = false;
+      runBtn.textContent = "Run the team";
+      return;
+    }
+    logEl.removeChild(workingCard3);
+    logEl.appendChild(renderStage(STAGES.content.label, content));
+
+    const workingCard4 = renderStage("FOLLOW-UP", "Working...");
+    logEl.appendChild(workingCard4);
+    const fuText = await callAgent(STAGES.followup.system, STAGES.followup.buildPrompt(idea, offer));
+    const followup = parseJSON(fuText);
+    if (!followup) {
+      errorBox.textContent = "FOLLOW-UP stage did not return valid JSON. Raw reply: " + fuText.slice(0, 300);
+      errorBox.style.display = "block";
+      runBtn.disabled = false;
+      runBtn.textContent = "Run the team";
+      return;
+    }
+    logEl.removeChild(workingCard4);
+    logEl.appendChild(renderStage(STAGES.followup.label, followup));
+
+  } catch (err) {
+    errorBox.textContent = "Error: " + (err.message || String(err));
+    errorBox.style.display = "block";
+  }
+
+  runBtn.disabled = false;
+  runBtn.textContent = "Run the team";
+});
+</script>
+
+</body>
+  </html>
